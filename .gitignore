@@ -1,0 +1,66 @@
+# Build artifacts
+build/
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.exp
+
+# Driver build artifacts
+driver/*.sys
+driver/*.pdb
+driver/*.obj
+driver/x64/
+driver/x86/
+driver/amd64/
+driver/i386/
+
+# Visual Studio
+.vs/
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+!CMakeLists.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.cache
+
+# Certificates
+*.cer
+*.pfx
+*.p12
+
+# Offset databases
+*.offsets
+*.json
+!package.json
+
+# Documentation builds
+docs/_build/
+docs/.doctrees/

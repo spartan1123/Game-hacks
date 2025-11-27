@@ -1,0 +1,60 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider=%ManufacturerName%
+DriverVer=01/01/2024,1.0.0.0
+CatalogFile=GameMemoryReader.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir = 12
+GameMemoryReader_Device_CoInstaller_CopyFiles = 11
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+GameMemoryReader.sys = 1,,
+WdfCoInstaller$KMDFCOINSTALLERVERSION$.dll = 1
+
+;*****************************************
+; Install Section
+;*****************************************
+
+[Manufacturer]
+%ManufacturerName%=Standard,NTamd64
+
+[Standard.NTamd64]
+%GameMemoryReader.DeviceDesc%=GameMemoryReader_Device, Root\GameMemoryReader
+
+[GameMemoryReader_Device.NT]
+CopyFiles=Drivers_Dir
+
+[Drivers_Dir]
+GameMemoryReader.sys
+
+;-------------- Service installation
+[GameMemoryReader_Device.NT.Services]
+AddService = GameMemoryReader,%SPSVCINST_ASSOCSERVICE%, GameMemoryReader_Service_Inst
+
+; -------------- GameMemoryReader driver install sections
+[GameMemoryReader_Service_Inst]
+DisplayName    = %GameMemoryReader.SVCDESC%
+ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
+StartType      = 3               ; SERVICE_DEMAND_START
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\GameMemoryReader.sys
+
+[GameMemoryReader_Device.NT.Wdf]
+KmdfService =  GameMemoryReader, GameMemoryReader_wdfsect
+
+[GameMemoryReader_wdfsect]
+KmdfLibraryVersion = 1.15
+
+[Strings]
+SPSVCINST_ASSOCSERVICE= 0x00000002
+ManufacturerName="Game Memory Reader"
+GameMemoryReader.DeviceDesc="Game Memory Reader Driver"
+GameMemoryReader.SVCDESC="Game Memory Reader Driver"
+DiskName = "GameMemoryReader Installation Disk"
