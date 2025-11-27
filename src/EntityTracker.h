@@ -49,6 +49,12 @@ public:
     void SetEntitySize(ULONG size) { m_EntitySize = size; }
     void SetMaxEntities(ULONG max) { m_MaxEntities = max; }
     
+    // Unreal Engine 5 specific offsets
+    void SetGWorldOffset(ULONG_PTR offset) { m_GWorldOffset = offset; }
+    void SetPersistentLevelOffset(ULONG offset) { m_PersistentLevelOffset = offset; }
+    void SetAActorsOffset(ULONG offset) { m_AActorsOffset = offset; }
+    void SetActorIdOffset(ULONG offset) { m_ActorIdOffset = offset; }
+    
     // Health offset
     void SetHealthOffset(ULONG offset) { m_HealthOffset = offset; }
     void SetMaxHealthOffset(ULONG offset) { m_MaxHealthOffset = offset; }
@@ -78,6 +84,12 @@ private:
     ULONG m_EntitySize;
     ULONG m_MaxEntities;
     
+    // Unreal Engine 5 specific offsets
+    ULONG_PTR m_GWorldOffset;           // Offset to GWorld global pointer
+    ULONG m_PersistentLevelOffset;      // Offset from UWorld to PersistentLevel (typically 0x30-0x38)
+    ULONG m_AActorsOffset;              // Offset from ULevel to AActors TArray (typically 0x98-0xA0)
+    ULONG m_ActorIdOffset;             // Offset from AActor to Actor ID (typically 0x18-0x24)
+    
     // Entity structure offsets
     ULONG m_HealthOffset;
     ULONG m_MaxHealthOffset;
@@ -97,4 +109,11 @@ private:
     bool ReadEntityData(ULONG_PTR entityAddress, EntityInfo& entity);
     bool IsValidEntity(ULONG_PTR entityAddress);
     float CalculateDistance(const float pos1[3], const float pos2[3]);
+    
+    // Unreal Engine 5 GWorld traversal helpers
+    bool ReadGWorld(ULONG_PTR& gWorldAddress);
+    bool ReadPersistentLevel(ULONG_PTR uWorldAddress, ULONG_PTR& persistentLevelAddress);
+    bool ReadAActorsTArray(ULONG_PTR persistentLevelAddress, ULONG_PTR& actorsData, ULONG& actorCount);
+    bool IsPawnActor(ULONG_PTR actorAddress);
+    ULONG GetActorId(ULONG_PTR actorAddress);
 };
