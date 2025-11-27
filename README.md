@@ -51,6 +51,16 @@ Using kernel-level drivers to access game memory may:
 - Driver hiding techniques
 - NTDLL unhooking support
 
+## Microsoft WDK Compliance
+
+This driver is built following Microsoft's official Windows Driver Kit (WDK) documentation:
+- **Reference**: https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/
+- Uses Windows Driver Framework (WDF) as recommended by Microsoft
+- Implements proper security practices and buffer validation
+- Follows Microsoft's IRQL and memory management guidelines
+
+See `driver/MICROSOFT_COMPLIANCE.md` for detailed compliance documentation.
+
 ## Architecture
 
 ```

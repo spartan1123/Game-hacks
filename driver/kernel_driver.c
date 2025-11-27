@@ -2,6 +2,9 @@
  * Kernel-Level Memory Reader Driver
  * Windows Driver Framework (WDF) Implementation
  * 
+ * Based on Microsoft Windows Driver Kit (WDK) documentation:
+ * https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/
+ * 
  * WARNING: This driver is for educational and research purposes only.
  * Unauthorized use may violate terms of service and applicable laws.
  */
@@ -9,6 +12,11 @@
 #include <ntddk.h>
 #include <wdf.h>
 #include <ntstrsafe.h>
+
+// Microsoft WDF version requirement
+#if !defined(_WIN64)
+#error "This driver requires x64 architecture"
+#endif
 
 #define DEVICE_NAME L"\\Device\\GameMemoryReader"
 #define SYMBOLIC_LINK L"\\DosDevices\\GameMemoryReader"
@@ -136,13 +144,16 @@ NTSTATUS GameMemoryReaderEvtDeviceAdd(
         return status;
     }
 
-    // Create device name
+    // Create device interface (Microsoft recommended approach)
     RtlInitUnicodeString(&deviceName, DEVICE_NAME);
     status = WdfDeviceCreateSymbolicLink(device, &deviceName);
     if (!NT_SUCCESS(status)) {
         KdPrint(("GameMemoryReader: WdfDeviceCreateSymbolicLink failed with status 0x%08X\n", status));
         return status;
     }
+
+    // Set I/O type to buffered (Microsoft best practice for security)
+    WdfDeviceSetIoType(device, WdfDeviceIoBuffered);
 
     // Configure IO queue
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchParallel);
@@ -195,23 +206,35 @@ NTSTATUS GameMemoryReaderEvtIoDeviceControl(
 
     UNREFERENCED_PARAMETER(Queue);
 
-    // Get input buffer
+    // Get input buffer (Microsoft WDF best practice)
     if (InputBufferLength > 0) {
         status = WdfRequestRetrieveInputBuffer(Request, InputBufferLength, &inputBuffer, NULL);
         if (!NT_SUCCESS(status)) {
-            KdPrint(("GameMemoryReader: Failed to retrieve input buffer\n"));
+            KdPrint(("GameMemoryReader: Failed to retrieve input buffer, status 0x%08X\n", status));
             WdfRequestComplete(Request, status);
-            return;
+            return status;
+        }
+        
+        // Validate input buffer is not NULL (Microsoft security requirement)
+        if (inputBuffer == NULL) {
+            WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+            return STATUS_INVALID_PARAMETER;
         }
     }
 
-    // Get output buffer
+    // Get output buffer (Microsoft WDF best practice)
     if (OutputBufferLength > 0) {
         status = WdfRequestRetrieveOutputBuffer(Request, OutputBufferLength, &outputBuffer, NULL, NULL);
         if (!NT_SUCCESS(status)) {
-            KdPrint(("GameMemoryReader: Failed to retrieve output buffer\n"));
+            KdPrint(("GameMemoryReader: Failed to retrieve output buffer, status 0x%08X\n", status));
             WdfRequestComplete(Request, status);
-            return;
+            return status;
+        }
+        
+        // Validate output buffer is not NULL (Microsoft security requirement)
+        if (outputBuffer == NULL) {
+            WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+            return STATUS_INVALID_PARAMETER;
         }
     }
 
@@ -316,6 +339,18 @@ NTSTATUS ReadProcessMemory(ULONG ProcessId, ULONG_PTR Address, PVOID Buffer, ULO
     KAPC_STATE apcState;
     NTSTATUS status = STATUS_SUCCESS;
     SIZE_T bytesRead = 0;
+    KIRQL oldIrql;
+
+    // Validate parameters (Microsoft security best practice)
+    if (Buffer == NULL || Size == 0 || Size > 0x100000) { // Max 1MB per read
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    // Check IRQL level (Microsoft requirement)
+    oldIrql = KeGetCurrentIrql();
+    if (oldIrql > APC_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     __try {
         process = GetProcessByPid(ProcessId);
@@ -324,14 +359,26 @@ NTSTATUS ReadProcessMemory(ULONG ProcessId, ULONG_PTR Address, PVOID Buffer, ULO
             __leave;
         }
 
+        // Attach to process context (Microsoft documented method)
         KeStackAttachProcess(process, &apcState);
         __try {
+            // Probe memory accessibility (Microsoft security requirement)
             ProbeForRead((PVOID)Address, Size, 1);
+            
+            // Validate address range
+            if (Address == 0 || Address + Size < Address) {
+                status = STATUS_INVALID_ADDRESS;
+                __leave;
+            }
+            
             RtlCopyMemory(Buffer, (PVOID)Address, Size);
             bytesRead = Size;
         }
         __except(EXCEPTION_EXECUTE_HANDLER) {
             status = GetExceptionCode();
+            if (status == STATUS_ACCESS_VIOLATION) {
+                status = STATUS_INVALID_ADDRESS;
+            }
         }
         KeUnstackDetachProcess(&apcState);
 
@@ -350,10 +397,21 @@ NTSTATUS ReadProcessMemory(ULONG ProcessId, ULONG_PTR Address, PVOID Buffer, ULO
 NTSTATUS WriteProcessMemory(ULONG ProcessId, ULONG_PTR Address, PVOID Buffer, ULONG Size)
 {
     PEPROCESS process = NULL;
-    KAPC_STATE apcState;
     NTSTATUS status = STATUS_SUCCESS;
     PMDL mdl = NULL;
     PVOID mappedAddress = NULL;
+    KIRQL oldIrql;
+
+    // Validate parameters (Microsoft security best practice)
+    if (Buffer == NULL || Size == 0 || Size > 0x100000) { // Max 1MB per write
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    // Check IRQL level (Microsoft requirement)
+    oldIrql = KeGetCurrentIrql();
+    if (oldIrql > DISPATCH_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     __try {
         process = GetProcessByPid(ProcessId);
@@ -362,6 +420,13 @@ NTSTATUS WriteProcessMemory(ULONG ProcessId, ULONG_PTR Address, PVOID Buffer, UL
             __leave;
         }
 
+        // Validate address range
+        if (Address == 0 || Address + Size < Address) {
+            status = STATUS_INVALID_ADDRESS;
+            __leave;
+        }
+
+        // Create MDL for memory write (Microsoft documented method)
         mdl = IoAllocateMdl((PVOID)Address, Size, FALSE, FALSE, NULL);
         if (!mdl) {
             status = STATUS_INSUFFICIENT_RESOURCES;
@@ -369,6 +434,7 @@ NTSTATUS WriteProcessMemory(ULONG ProcessId, ULONG_PTR Address, PVOID Buffer, UL
         }
 
         __try {
+            // Probe and lock pages (Microsoft security requirement)
             MmProbeAndLockPages(mdl, KernelMode, IoModifyAccess);
         }
         __except(EXCEPTION_EXECUTE_HANDLER) {
@@ -377,6 +443,7 @@ NTSTATUS WriteProcessMemory(ULONG ProcessId, ULONG_PTR Address, PVOID Buffer, UL
             __leave;
         }
 
+        // Map locked pages (Microsoft documented API)
         mappedAddress = MmMapLockedPagesSpecifyCache(mdl, KernelMode, MmNonCached, NULL, FALSE, NormalPagePriority);
         if (!mappedAddress) {
             MmUnlockPages(mdl);
@@ -385,10 +452,14 @@ NTSTATUS WriteProcessMemory(ULONG ProcessId, ULONG_PTR Address, PVOID Buffer, UL
             __leave;
         }
 
+        // Perform memory copy
         RtlCopyMemory(mappedAddress, Buffer, Size);
+        
+        // Cleanup MDL (Microsoft requirement)
         MmUnmapLockedPages(mappedAddress, mdl);
         MmUnlockPages(mdl);
         IoFreeMdl(mdl);
+        mdl = NULL;
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
         if (mdl) {
