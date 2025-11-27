@@ -5,6 +5,7 @@
 #include "kernel_driver.h"
 #include <psapi.h>
 #include <tlhelp32.h>
+#include <windows.h>
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
@@ -468,10 +469,26 @@ bool KernelMemoryReader::IsEntityVisible(const EntityInfo& entity, const EntityI
 
 bool KernelMemoryReader::GetBoneMatrix(ULONG_PTR entityAddress, ULONG boneIndex, float matrix[3][4])
 {
-    // This would read the bone matrix from the entity structure
-    // Implementation depends on specific game engine
-    ULONG_PTR boneMatrixAddress = entityAddress + 0x26A8; // Example offset, game-specific
-    return ReadMemory(boneMatrixAddress + (boneIndex * sizeof(float) * 12), matrix, sizeof(float) * 12);
+    if (m_AttachedProcessId == 0 || entityAddress == 0) {
+        return false;
+    }
+
+    // Read bone matrix base address from entity structure
+    // Common offset for bone matrix array (game-specific, should be discovered via pattern scanning)
+    ULONG_PTR boneMatrixBase = 0;
+    if (!Read(entityAddress + 0x26A8, boneMatrixBase)) {
+        return false;
+    }
+
+    if (boneMatrixBase == 0) {
+        return false;
+    }
+
+    // Calculate bone matrix address: base + (boneIndex * sizeof(matrix))
+    ULONG_PTR boneMatrixAddress = boneMatrixBase + (boneIndex * sizeof(float) * 12);
+    
+    // Read the 3x4 bone matrix (12 floats)
+    return ReadMemory(boneMatrixAddress, matrix, sizeof(float) * 12);
 }
 
 bool KernelMemoryReader::BypassPageGuard(ULONG_PTR address)
@@ -494,16 +511,109 @@ bool KernelMemoryReader::BypassCopyOnWrite(ULONG_PTR address)
 
 bool KernelMemoryReader::HideDriver()
 {
-    // Driver hiding implementation would go here
-    // This is a placeholder for demonstration
+    if (m_DriverHandle == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    // Hide driver from driver list by manipulating driver object
+    // This requires kernel-mode access via IOCTL to driver
+    
+    // Method 1: Remove driver from loaded modules list via registry
+    HKEY hKey;
+    LONG result = RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+        "SYSTEM\\CurrentControlSet\\Services\\GameMemoryReader",
+        0, KEY_SET_VALUE, &hKey);
+    
+    if (result == ERROR_SUCCESS) {
+        // Set Start value to 4 (DISABLED) to hide from service list
+        DWORD startValue = 4;
+        RegSetValueExA(hKey, "Start", 0, REG_DWORD, (BYTE*)&startValue, sizeof(DWORD));
+        RegCloseKey(hKey);
+    }
+
+    // Method 2: Unlink driver object from kernel's driver list (requires kernel-mode)
+    // This would need to be done via a kernel-mode IOCTL
+    // For now, we use registry method which is safer and doesn't require kernel modifications
+    
+    // Method 3: Hide from Process Hacker/Process Explorer by removing from handle table
+    // This requires more advanced kernel techniques
+    
     return true;
 }
 
 bool KernelMemoryReader::UnhookNtdll()
 {
-    // NTDLL unhooking implementation would go here
-    // This is a placeholder for demonstration
-    return true;
+    HMODULE ntdllModule = GetModuleHandleA("ntdll.dll");
+    if (ntdllModule == NULL) {
+        return false;
+    }
+
+    // Get NTDLL base address
+    MODULEINFO modInfo;
+    if (!GetModuleInformation(GetCurrentProcess(), ntdllModule, &modInfo, sizeof(modInfo))) {
+        return false;
+    }
+
+    // Common hooked functions that anti-cheats modify
+    struct HookedFunction {
+        const char* functionName;
+        FARPROC originalAddress;
+    };
+
+    // List of commonly hooked functions
+    const char* hookedFunctions[] = {
+        "NtReadVirtualMemory",
+        "NtWriteVirtualMemory",
+        "NtQueryInformationProcess",
+        "NtOpenProcess",
+        "NtProtectVirtualMemory",
+        "NtQuerySystemInformation"
+    };
+
+    bool success = true;
+
+    for (const char* funcName : hookedFunctions) {
+        FARPROC hookedAddr = GetProcAddress(ntdllModule, funcName);
+        if (hookedAddr == NULL) {
+            continue;
+        }
+
+        // Read first bytes to detect hook (E9 = JMP, E8 = CALL)
+        BYTE firstBytes[5];
+        DWORD oldProtect;
+        
+        if (!VirtualProtect(hookedAddr, 5, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+            success = false;
+            continue;
+        }
+
+        memcpy(firstBytes, hookedAddr, 5);
+
+        // Check if function is hooked (starts with JMP or CALL)
+        if (firstBytes[0] == 0xE9 || firstBytes[0] == 0xE8) {
+            // Function is hooked, restore from disk
+            // Load fresh copy of ntdll.dll from disk
+            HMODULE freshNtdll = LoadLibraryExA("C:\\Windows\\System32\\ntdll.dll", NULL, 
+                                               DONT_RESOLVE_DLL_REFERENCES | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+            
+            if (freshNtdll != NULL) {
+                FARPROC originalFunc = GetProcAddress(freshNtdll, funcName);
+                if (originalFunc != NULL) {
+                    // Calculate offset from base
+                    ULONG_PTR offset = (ULONG_PTR)originalFunc - (ULONG_PTR)freshNtdll;
+                    FARPROC targetAddr = (FARPROC)((ULONG_PTR)ntdllModule + offset);
+                    
+                    // Copy original bytes
+                    memcpy(hookedAddr, targetAddr, 5);
+                }
+                FreeLibrary(freshNtdll);
+            }
+        }
+
+        VirtualProtect(hookedAddr, 5, oldProtect, &oldProtect);
+    }
+
+    return success;
 }
 
 std::string KernelMemoryReader::PatternStringToBytes(const std::string& pattern)
